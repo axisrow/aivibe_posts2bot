@@ -35,13 +35,55 @@ async def with_status_message(
 async def send_rewritten_post(
     message: Message, post: dict, custom_prompt: Optional[str], model: Optional[str]
 ):
-    """Общая функция для рерайта и отправки поста (с фото или без)"""
+    """Общая функция для рерайта и отправки поста (с видео, фото или без)"""
     rewritten = await rewrite_post(post, custom_prompt, model)
     photo_url = post.get("photo_url")
     photo_file_id = post.get("photo_file_id")
+    video_url = post.get("video_url")
+    video_file_id = post.get("video_file_id")
 
-    # Лимит на подпись к фото в Telegram — 1024 символа
+    # Лимит на подпись к видео/фото в Telegram — 1024 символа
     caption = rewritten[:1021] + "..." if len(rewritten) > 1024 else rewritten
+
+    # Попытка отправить видео через file_id (из пересланных сообщений)
+    if video_file_id:
+        try:
+            await message.answer_video(
+                video=video_file_id, caption=caption, parse_mode=None
+            )
+            return
+        except Exception as e:
+            logger.error("Failed to send video by file_id: %s", e)
+
+    # Попытка скачать и отправить видео по URL
+    if video_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                }
+                async with session.get(
+                    video_url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    ssl=False,  # CDN Telegram использует self-signed сертификат
+                ) as resp:
+                    if resp.status == 200:
+                        # Проверка размера (лимит Telegram: 50 МБ)
+                        content_length = resp.headers.get('Content-Length')
+                        if content_length and int(content_length) > 50 * 1024 * 1024:
+                            logger.warning("Video too large: %s bytes", content_length)
+                        else:
+                            video_bytes = await resp.read()
+                            video_file = BufferedInputFile(video_bytes, filename="video.mp4")
+                            await message.answer_video(
+                                video=video_file, caption=caption, parse_mode=None
+                            )
+                            return
+                    else:
+                        logger.warning("Failed to download video: HTTP %s", resp.status)
+        except Exception as e:
+            logger.error("Failed to download/send video: %s", e)
 
     if photo_file_id:
         try:
@@ -201,10 +243,16 @@ async def handle_forwarded_post(message: Message, state: FSMContext):
     if message.photo:
         photo_file_id = message.photo[-1].file_id
 
+    # Извлекаем видео, если оно есть
+    video_file_id = None
+    if message.video:
+        video_file_id = message.video.file_id
+
     # Формируем объект поста для пайплайна
     post_data = {
         "text": text,
         "photo_file_id": photo_file_id,
+        "video_file_id": video_file_id,
         "post_link": "forwarded_post"
     }
 

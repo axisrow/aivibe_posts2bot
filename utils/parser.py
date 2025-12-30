@@ -246,6 +246,72 @@ def _extract_photo_url(message: Tag) -> Optional[str]:
     return None
 
 
+def _extract_video_url(message: Tag) -> Optional[str]:
+    """Извлекает прямую ссылку на видео из поста."""
+    # 1. Проверяем элементы с потенциальными видео
+    selectors = [
+        ".tgme_widget_message_video",
+        ".tgme_widget_message_video_player",
+        ".tgme_widget_message_video_wrap"
+    ]
+
+    for selector in selectors:
+        for el in message.select(selector):
+            # Проверяем background-image в стиле
+            style = el.get("style", "")
+            if style and "background-image" in style:
+                match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
+                if match:
+                    url = match.group(1)
+                    if url.startswith("//"):
+                        url = "https:" + url
+                    return url
+
+            # Ищем <video> теги внутри элемента
+            video_tag = el.find("video")
+            if video_tag:
+                # Проверяем src атрибут тега video
+                if video_tag.has_attr("src"):
+                    url = video_tag["src"]
+                    if url.startswith("//"):
+                        url = "https:" + url
+                    return url
+
+                # Проверяем <source> элементы внутри <video>
+                source = video_tag.find("source")
+                if source and source.has_attr("src"):
+                    url = source["src"]
+                    if url.startswith("//"):
+                        url = "https:" + url
+                    return url
+
+    # 2. Поиск <video> тегов в сообщении
+    for video in message.find_all("video"):
+        if video.has_attr("src"):
+            url = video["src"]
+            if url.startswith("//"):
+                url = "https:" + url
+            return url
+
+        # Проверяем <source> элементы
+        source = video.find("source")
+        if source and source.has_attr("src"):
+            url = source["src"]
+            if url.startswith("//"):
+                url = "https:" + url
+            return url
+
+    # 3. Поиск data-src атрибутов (для ленивой загрузки)
+    for el in message.find_all(attrs={"data-src": True}):
+        url = el.get("data-src")
+        if url:
+            if url.startswith("//"):
+                url = "https:" + url
+            return url
+
+    return None
+
+
 def _extract_text(message) -> str:
     """Извлекает текст сообщения из HTML."""
     block = message.select_one(".tgme_widget_message_text")
@@ -513,6 +579,7 @@ class TelegramWebScraper:
                     "is_forwarded": _is_forwarded(message),
                     "media_type": _detect_media_type(message),
                     "photo_url": _extract_photo_url(message),
+                    "video_url": _extract_video_url(message),
                     "message_id": msg_id,
                 }
             )
@@ -617,4 +684,5 @@ class TelegramWebScraper:
             "is_forwarded": _is_forwarded(message),
             "media_type": _detect_media_type(message),
             "photo_url": _extract_photo_url(message),
+            "video_url": _extract_video_url(message),
         }
