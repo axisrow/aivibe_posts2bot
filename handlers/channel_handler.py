@@ -11,7 +11,8 @@ import aiohttp
 from utils.parser import TelegramWebScraper, TelegramWebError, parse_post_link
 from utils.llm_service import rewrite_post
 from utils.formatter import format_summary
-from config import MAX_PAGES_PER_REQUEST
+from utils.text_utils import split_text, split_text_once
+from config import MAX_PAGES_PER_REQUEST, MAX_MESSAGE_LENGTH, MAX_CAPTION_LENGTH
 from utils.states import PostSelectionState
 
 router = Router()
@@ -42,8 +43,14 @@ async def send_rewritten_post(
     video_url = post.get("video_url")
     video_file_id = post.get("video_file_id")
 
-    # Лимит на подпись к видео/фото в Telegram — 1024 символа
-    caption = rewritten[:1021] + "..." if len(rewritten) > 1024 else rewritten
+    has_media = bool(video_file_id or video_url or photo_file_id or photo_url)
+    caption, remainder = split_text_once(rewritten, MAX_CAPTION_LENGTH)
+    extra_text_chunks = split_text(remainder, MAX_MESSAGE_LENGTH) if remainder else []
+    text_chunks = split_text(rewritten, MAX_MESSAGE_LENGTH)
+
+    async def send_text_chunks(chunks: list[str]) -> None:
+        for chunk in chunks:
+            await message.answer(chunk, parse_mode=None)
 
     # Попытка отправить видео через file_id (из пересланных сообщений)
     if video_file_id:
@@ -51,6 +58,8 @@ async def send_rewritten_post(
             await message.answer_video(
                 video=video_file_id, caption=caption, parse_mode=None
             )
+            if extra_text_chunks:
+                await send_text_chunks(extra_text_chunks)
             return
         except Exception as e:
             logger.error("Failed to send video by file_id: %s", e)
@@ -79,6 +88,8 @@ async def send_rewritten_post(
                             await message.answer_video(
                                 video=video_file, caption=caption, parse_mode=None
                             )
+                            if extra_text_chunks:
+                                await send_text_chunks(extra_text_chunks)
                             return
                     else:
                         logger.warning("Failed to download video: HTTP %s", resp.status)
@@ -90,6 +101,8 @@ async def send_rewritten_post(
             await message.answer_photo(
                 photo=photo_file_id, caption=caption, parse_mode=None
             )
+            if extra_text_chunks:
+                await send_text_chunks(extra_text_chunks)
             return
         except Exception as e:
             logger.error("Failed to send photo by file_id: %s", e)
@@ -113,15 +126,18 @@ async def send_rewritten_post(
                         await message.answer_photo(
                             photo=photo_file, caption=caption, parse_mode=None
                         )
+                        if extra_text_chunks:
+                            await send_text_chunks(extra_text_chunks)
                         return
                     else:
                         logger.warning("Failed to download photo: HTTP %s", resp.status)
         except Exception as e:
             logger.error("Failed to download/send photo: %s", e)
 
-    # Fallback: отправить только текст (лимит 4096)
-    text_msg = rewritten[:4093] + "..." if len(rewritten) > 4096 else rewritten
-    await message.answer(text_msg, parse_mode=None)
+    # Fallback: отправить только текст
+    if not has_media and not text_chunks:
+        return
+    await send_text_chunks(text_chunks)
 
 
 @router.message(PostSelectionState.waiting_for_selection, F.text.regexp(r"^\d+$"))

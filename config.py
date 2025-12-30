@@ -35,6 +35,7 @@ INCLUDE_FORWARDED_POSTS = True
 
 # Telegram лимиты
 MAX_MESSAGE_LENGTH = 4096
+MAX_CAPTION_LENGTH = 1024  # подпись для фото/видео
 MAX_POSTS_IN_SUMMARY = 20
 
 # Рерайтинг постов
