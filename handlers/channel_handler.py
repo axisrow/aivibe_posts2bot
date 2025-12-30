@@ -140,12 +140,19 @@ async def send_rewritten_post(
     await send_text_chunks(text_chunks)
 
 
-@router.message(PostSelectionState.waiting_for_selection, F.text.regexp(r"^\d+$"))
+@router.message(PostSelectionState.waiting_for_selection)
 async def handle_post_selection(message: Message, state: FSMContext):
     """Обработка выбора поста по номеру"""
-    if not message.text:
+    text = (message.text or "").strip()
+    if not text:
         return
-    post_number = int(message.text.strip())
+    if not text.isdigit():
+        if any(x in text.lower() for x in ["t.me", "@", "http"]) or is_valid_channel_username(text):
+            return await handle_channel_link(message, state)
+        return await message.answer(
+            "❌ Отправь номер поста цифрой или пришли ссылку на канал заново."
+        )
+    post_number = int(text)
     data = await state.get_data()
     posts = data.get("posts", [])
     custom_prompt = data.get("rewrite_prompt")
