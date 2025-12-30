@@ -40,6 +40,34 @@ class TelegramWebError(Exception):
     """Базовая ошибка при работе с веб-версией Telegram."""
 
 
+def is_valid_channel_username(username: str) -> bool:
+    """
+    Проверяет, соответствует ли имя канала правилам Telegram.
+
+    Args:
+        username: Имя канала (без @ или с @)
+
+    Returns:
+        True если имя валидно, False если нет
+    """
+    # Убираем @ если есть
+    clean = username.lstrip("@")
+
+    # Проверка длины (5-32 символа)
+    if len(clean) < 5 or len(clean) > 32:
+        return False
+
+    # Проверка символов: только латиница, цифры, подчеркивание
+    if not re.match(r"^[a-zA-Z0-9_]+$", clean):
+        return False
+
+    # Не должно начинаться с цифры
+    if clean[0].isdigit():
+        return False
+
+    return True
+
+
 def _normalize_channel(channel: str) -> str:
     """
     Нормализует название канала из различных форматов.
@@ -519,9 +547,18 @@ class TelegramWebScraper:
             url = f"{url}?before={before}"
 
         try:
-            response = self.session.get(url, timeout=15)
+            response = self.session.get(url, timeout=15, allow_redirects=True)
         except requests.RequestException as exc:
             raise TelegramWebError(f"Ошибка запроса: {exc}") from exc
+
+        # Проверка редиректа (контент недоступен)
+        if response.history:
+            raise TelegramWebError(
+                f"Контент недоступен\n\n"
+                f"Возможные причины:\n"
+                f"• Канал не существует или является приватным\n"
+                f"• Администратор канала запретил пересылку постов\n\n"
+            )
 
         if response.status_code == 404:
             raise TelegramWebError("Канал не найден или приватный")
@@ -626,9 +663,18 @@ class TelegramWebScraper:
         url = f"{self.BASE_URL}/{slug}/{post_id}"
 
         try:
-            response = self.session.get(url, timeout=15)
+            response = self.session.get(url, timeout=15, allow_redirects=True)
         except requests.RequestException as exc:
             raise TelegramWebError(f"Ошибка запроса: {exc}") from exc
+
+        # Проверка редиректа (контент недоступен)
+        if response.history:
+            raise TelegramWebError(
+                "Пост недоступен\n\n"
+                "Возможные причины:\n"
+                "• Канал не существует или является приватным\n"
+                "• Администратор канала запретил копирование постов"
+            )
 
         # Обработка HTTP ошибок
         if response.status_code == 404:

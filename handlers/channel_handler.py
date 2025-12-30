@@ -8,7 +8,7 @@ from typing import Callable, Any, Optional
 
 import aiohttp
 
-from utils.parser import TelegramWebScraper, TelegramWebError, parse_post_link
+from utils.parser import TelegramWebScraper, TelegramWebError, parse_post_link, is_valid_channel_username
 from utils.llm_service import rewrite_post
 from utils.formatter import format_summary
 from utils.text_utils import split_text, split_text_once
@@ -29,7 +29,7 @@ async def with_status_message(
         await status_msg.delete()
         return result
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        await status_msg.edit_text(f"❌ {e}")
         raise
 
 
@@ -207,13 +207,10 @@ async def handle_direct_post_link(
         )
     except TelegramWebError as e:
         logger.error("Direct post fetch error %s/%d: %s", channel_slug, post_id, e)
-        await message.answer(
-            f"❌ Ошибка при загрузке поста:\n{e}\n\n"
-            f"💡 Проверь, что пост существует и канал публичный."
-        )
+        # Ошибка уже показана в with_status_message
     except Exception:
         logger.exception("Unexpected error for direct post %s/%d", channel_slug, post_id)
-        await message.answer("❌ Неожиданная ошибка при обработке поста")
+        # Ошибка уже показана в with_status_message
 
 
 async def handle_channel_scan(message: Message, state: FSMContext, channel: str):
@@ -304,6 +301,16 @@ async def handle_channel_link(message: Message, state: FSMContext):
     # Валидация входа: проверяем что это похоже на ссылку на Telegram
     if not any(x in channel.lower() for x in ["t.me", "@", "http"]):
         if "/" not in channel and len(channel) > 3:
+            # Проверяем формат имени канала (только латиница, цифры, подчеркивание, 5-32 символа)
+            if not is_valid_channel_username(channel):
+                return await message.answer(
+                    "❌ Некорректное имя канала\n\n"
+                    "Имя канала должно:\n"
+                    "• Содержать только латинские буквы, цифры и подчеркивание\n"
+                    "• Быть длиной от 5 до 32 символов\n"
+                    "• Не начинаться с цифры\n\n"
+                    "Или отправьте полную ссылку на канал (например, https://t.me/channelname)"
+                )
             channel = f"@{channel}"
         else:
             return await message.answer("❌ Некорректная ссылка на канал")
