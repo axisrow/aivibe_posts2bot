@@ -2,9 +2,16 @@
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    FSInputFile,
+)
 from aiogram.fsm.context import FSMContext
 import logging
+from pathlib import Path
 
 from config import (
     DEFAULT_REWRITE_PROMPT,
@@ -14,6 +21,8 @@ from config import (
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+INSTRUCTION_IMAGE_PATH = Path(__file__).resolve().parents[1] / "images" / "instruction.png"
 
 HELP_TEXT = {
     "start": (
@@ -54,7 +63,14 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """Обработчик команды /help"""
-    await message.answer(HELP_TEXT["help"])
+    if not INSTRUCTION_IMAGE_PATH.exists():
+        logger.warning("Instruction image not found: %s", INSTRUCTION_IMAGE_PATH)
+        return await message.answer(HELP_TEXT["help"])
+
+    await message.answer_photo(
+        photo=FSInputFile(str(INSTRUCTION_IMAGE_PATH)),
+        caption=HELP_TEXT["help"],
+    )
 
 
 @router.message(Command("settings"))
