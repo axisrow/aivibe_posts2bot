@@ -40,7 +40,16 @@ async def set_commands(bot: Bot):
         BotCommand(command="prompt", description="Установить промпт"),
         BotCommand(command="model", description="Выбрать модель"),
     ]
-    await bot.set_my_commands(commands)
+    for attempt in range(1, 4):
+        try:
+            await bot.set_my_commands(commands, request_timeout=30)
+            return
+        except (TelegramNetworkError, asyncio.TimeoutError):
+            if attempt == 3:
+                logger.error("Не удалось зарегистрировать команды Telegram")
+                return
+            logger.warning("Не удалось зарегистрировать команды, повтор через 5 сек...")
+            await asyncio.sleep(5)
 
 
 async def main():
@@ -53,13 +62,14 @@ async def main():
     dp.include_router(start_handler.router)
     dp.include_router(channel_handler.router)
 
-    await set_commands(bot)
-
-    healthcheck_runner = await start_healthcheck_server(
-        port=HEALTHCHECK_PORT, endpoint=HEALTHCHECK_ENDPOINT
-    )
+    healthcheck_runner = None
 
     try:
+        await set_commands(bot)
+        healthcheck_runner = await start_healthcheck_server(
+            port=HEALTHCHECK_PORT, endpoint=HEALTHCHECK_ENDPOINT
+        )
+
         for attempt in range(1, 6):
             try:
                 logger.info("Подключение к Telegram (попытка %d/5)...", attempt)
@@ -72,7 +82,9 @@ async def main():
                 logger.warning("Ошибка, повтор через 10 сек...")
                 await asyncio.sleep(10)
     finally:
-        await healthcheck_runner.cleanup()
+        if healthcheck_runner is not None:
+            await healthcheck_runner.cleanup()
+        await bot.session.close()
 
 
 if __name__ == "__main__":
